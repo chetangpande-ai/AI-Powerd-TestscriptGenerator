@@ -133,9 +133,25 @@ The context pack includes:
 - known tests
 - selected source files
 - selected config/test data
+- web crawl evidence for UI scenarios
+- raw UI action plan for brand-new web scenarios
 - the user scenario
 
 The LLM receives this compact pack, not the whole repository.
+
+## Web Crawl Evidence
+
+Web crawl is not vector retrieval. It is a deterministic evidence-gathering step used only when the scenario looks like a web UI test.
+
+The crawler:
+
+- reads explicit URLs from the scenario or guidelines
+- reads fallback URLs from `src/test/resources/config/**/*.properties`
+- fetches a small number of target pages
+- extracts page titles, forms, inputs, buttons, and links with an HTML parser
+- builds a raw action plan from the user steps and discovered page controls
+
+The LLM then converts that raw action plan into the target framework style. Existing page objects, base classes, config readers, and test data still take priority over creating new code.
 
 ## Why This Is Not RAG
 
@@ -163,5 +179,6 @@ scan files -> extract symbols -> score text deterministically -> build context p
 
 - lexical matching can miss scenarios phrased very differently
 - Java parsing is regex-based, not a full compiler AST
+- the web crawler reads server-rendered HTML and does not execute JavaScript-heavy flows
 - the scanner currently targets Java Maven/TestNG repository structure
 - generated code still requires human review before commit

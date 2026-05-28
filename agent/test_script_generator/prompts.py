@@ -9,6 +9,9 @@ Rules:
 - Do not duplicate a test when the same scenario already exists; return a reuse recommendation instead.
 - Follow existing package names, class naming, JavaDoc style, and assertions.
 - Web UI tests must use Page Object Model methods; do not put Selenium locators directly inside test classes.
+- For new web UI automation, use the Web discovery context as raw crawl evidence, then convert it into framework-style Page Object Model classes and TestNG tests.
+- If a web framework is missing, generate the smallest required framework additions such as Selenium/WebDriverManager dependencies, DriverFactory, BasePage, BaseWebTest, config keys, and TestNG suite updates.
+- Web tests should compile and run through Maven using TestNG groups such as groups="web".
 - API tests must use ApiClient, ApiRoutes, and TestDataReader where suitable.
 - When modifying an existing file, return the full updated file content with existing code preserved exactly except for the required additions.
 - Do not include placeholder comments such as "existing methods remain unchanged".

@@ -17,28 +17,35 @@ The UI is organized around workflow stages. Click any stage to see its details.
    - Builds a catalog of classes, methods, annotations, JavaDoc, page objects, API helpers, config, and JSON test data.
    - Checks whether the scenario appears already automated.
 
-4. **Generate proposal**
+4. **Crawl web app**
+   - Runs only for web UI scenarios, detected from URLs or UI intent such as browser, page, form, click, field, button, or search.
+   - Collects lightweight page evidence from the target URL, including title, forms, inputs, buttons, and links.
+   - Builds a raw action plan from the scenario steps and crawl evidence.
+   - Skips this stage for API or non-web scenarios.
+
+5. **Generate proposal**
    - If existing coverage is found, generation is skipped.
+   - If new web UI coverage is required, the crawl evidence and raw action plan are added to the context pack.
    - If new code is required, the agent sends a compact repository context pack to the LLM.
    - The LLM returns strict JSON with proposed files, file contents, rationale, and validation commands.
 
-5. **Human review**
+6. **Human review**
    - Generated files are displayed in the UI.
    - Reviewer can inspect proposed scripts before any repository changes are made.
 
-6. **Approval**
+7. **Approval**
    - Reviewer approves the proposal.
    - Approval is disabled when the decision is `reuse_existing` because there are no files to commit.
 
-7. **Run validation**
+8. **Run validation**
    - Runs generated Maven validation commands, such as `mvn clean test`.
    - The backend currently allows Maven commands only.
 
-8. **Commit changes**
+9. **Commit changes**
    - Writes generated files into a fresh clone.
    - Creates a local Git commit.
 
-9. **Push branch**
+10. **Push branch**
    - Pushes the generated branch to the same GitHub repository.
    - Branch name format:
 
@@ -46,7 +53,7 @@ The UI is organized around workflow stages. Click any stage to see its details.
 codex/test-script-generator-<run_id>
 ```
 
-10. **Open pull request**
+11. **Open pull request**
     - Creates a GitHub pull request from the generated branch into the selected base branch.
 
 ## Decision Types

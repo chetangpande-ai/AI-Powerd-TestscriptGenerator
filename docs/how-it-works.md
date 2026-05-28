@@ -17,6 +17,7 @@ The UI lets the user:
 - add project-specific guidelines
 - view workflow stages
 - inspect stage-specific details
+- inspect web crawl evidence and raw UI action plans
 - review generated files
 - approve generated scripts
 - open the final pull request
@@ -35,6 +36,7 @@ Responsibilities:
 
 - clone the GitHub repository
 - invoke the LangGraph agent
+- crawl web pages for UI evidence when a web scenario needs new automation
 - store workflow run state under `agent/runs`
 - expose run results to the UI
 - apply approved generated files
@@ -75,6 +77,8 @@ inventory_repo -> decide_or_generate
 - builds a code catalog
 - finds matching existing tests
 - selects relevant files as context
+- detects web UI scenarios and crawls configured or user-provided target URLs
+- adds the web raw action plan and page evidence to the context pack
 - renders a context pack
 
 `decide_or_generate`:
@@ -82,6 +86,25 @@ inventory_repo -> decide_or_generate
 - returns `reuse_existing` if a strong existing test match is found
 - otherwise calls the Mesh API LLM through LangChain
 - parses the LLM JSON proposal
+
+## Web Automation Flow
+
+Location:
+
+```text
+agent/test_script_generator/web_discovery.py
+```
+
+For web UI scenarios, the agent first tries to reuse existing tests and page objects. If the script does not already exist, it:
+
+- detects URLs from the scenario, guidelines, or `src/test/resources/config/**/*.properties`
+- fetches up to three target pages
+- extracts forms, inputs, buttons, links, and page titles
+- turns the scenario steps and page evidence into a raw action plan
+- sends that evidence to the LLM with the repository context
+- asks the LLM to generate framework-style Selenium/TestNG Page Object Model code
+
+If the target repository does not already have web test foundations, the prompt allows the smallest required additions, such as Selenium/WebDriverManager dependencies, `DriverFactory`, `BasePage`, `BaseWebTest`, config keys, and TestNG suite updates.
 
 ## LLM Layer
 

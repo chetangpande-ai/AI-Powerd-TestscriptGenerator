@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   AlertCircle,
@@ -34,6 +34,33 @@ function App() {
   const [error, setError] = useState("");
   const [reviewerNote, setReviewerNote] = useState("");
   const [runValidation, setRunValidation] = useState(true);
+
+  useEffect(() => {
+    const runId = new URLSearchParams(window.location.search).get("run");
+    if (!runId) return;
+    let cancelled = false;
+    async function loadRun() {
+      setBusy(true);
+      setError("");
+      try {
+        const response = await fetch(`${API_BASE}/runs/${runId}`);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail ?? "Unable to load workflow.");
+        if (!cancelled) {
+          setRun(payload);
+          setActiveStageId(firstInterestingStage(payload));
+        }
+      } catch (caught) {
+        if (!cancelled) setError(caught.message);
+      } finally {
+        if (!cancelled) setBusy(false);
+      }
+    }
+    loadRun();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const activeStage = useMemo(() => {
     const stages = run?.stages ?? [];
@@ -90,6 +117,20 @@ function App() {
       setError(caught.message);
     } finally {
       setApproving(false);
+    }
+  }
+
+  async function refreshRun() {
+    if (!run?.id) return;
+    setError("");
+    try {
+      const response = await fetch(`${API_BASE}/runs/${run.id}`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail ?? "Unable to refresh workflow.");
+      setRun(payload);
+      setActiveStageId(firstInterestingStage(payload));
+    } catch (caught) {
+      setError(caught.message);
     }
   }
 
@@ -174,6 +215,7 @@ function App() {
           busy={busy}
           activeStageId={activeStageId}
           setActiveStageId={setActiveStageId}
+          refreshRun={refreshRun}
         />
         <StageDetails
           run={run}
@@ -192,7 +234,7 @@ function App() {
   );
 }
 
-function WorkflowOnly({ run, busy, activeStageId, setActiveStageId }) {
+function WorkflowOnly({ run, busy, activeStageId, setActiveStageId, refreshRun }) {
   const stages = run?.stages ?? defaultStages(busy);
   return (
     <section className="workflow-panel">
@@ -202,9 +244,14 @@ function WorkflowOnly({ run, busy, activeStageId, setActiveStageId }) {
           <h2>{run ? run.status.replaceAll("_", " ") : "Ready"}</h2>
         </div>
         {run?.working_branch && (
-          <div className="branch-chip">
-            <GitBranch size={15} />
-            <span>{run.working_branch}</span>
+          <div className="workflow-actions">
+            <button className="icon-action" type="button" onClick={refreshRun} aria-label="Refresh workflow">
+              <RefreshCw size={15} />
+            </button>
+            <div className="branch-chip">
+              <GitBranch size={15} />
+              <span>{run.working_branch}</span>
+            </div>
           </div>
         )}
       </div>
@@ -281,6 +328,7 @@ function StageDetails({
 function StageSpecificContent(props) {
   const { run, stageId } = props;
   if (stageId === "analyze") return <ReuseDetails run={run} />;
+  if (stageId === "crawl") return <WebDiscoveryDetails run={run} />;
   if (stageId === "generate") return <GeneratedDetails {...props} />;
   if (stageId === "review" || stageId === "approve") return <ReviewAndApproveDetails {...props} />;
   if (stageId === "validate") return <ValidationDetails run={run} />;
@@ -314,6 +362,73 @@ function ReuseDetails({ run }) {
       </div>
     </div>
   );
+}
+
+function WebDiscoveryDetails({ run }) {
+  const discovery = run.web_discovery ?? {};
+  const pages = discovery.pages ?? [];
+  const rawSteps = discovery.raw_script ?? [];
+  if (!discovery.enabled) {
+    return (
+      <div className="notice muted-notice">
+        <Clock size={18} />
+        <span>{discovery.summary || "Web crawl was skipped because this scenario was not detected as a web UI flow."}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="detail-stack">
+      <InfoRow label="Summary" value={discovery.summary} />
+      <div className="file-list">
+        <span>Target URLs</span>
+        {(discovery.urls ?? []).map((url) => <code key={url}>{url}</code>)}
+      </div>
+      <div className="file-list">
+        <span>Raw action plan</span>
+        {rawSteps.map((step, index) => <code key={`${step}-${index}`}>{`${index + 1}. ${step}`}</code>)}
+      </div>
+      <div className="evidence-grid">
+        {pages.length === 0 && <p className="muted">No page evidence was collected.</p>}
+        {pages.map((page) => (
+          <article className="evidence-panel" key={page.url}>
+            <h3>{page.title || "Untitled page"}</h3>
+            <code>{page.final_url || page.url}</code>
+            {page.error ? <p className="error-text">{page.error}</p> : <PageEvidence page={page} />}
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PageEvidence({ page }) {
+  const groups = [
+    ["Inputs", page.inputs ?? []],
+    ["Buttons", page.buttons ?? []],
+    ["Forms", page.forms ?? []],
+    ["Links", page.links ?? []],
+  ];
+  return (
+    <div className="evidence-sections">
+      {groups.map(([label, items]) => (
+        <div className="file-list" key={label}>
+          <span>{label}</span>
+          {items.length === 0 && <p className="muted">None detected.</p>}
+          {items.slice(0, 8).map((item, index) => (
+            <code key={`${label}-${index}`}>{formatEvidence(item)}</code>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function formatEvidence(item) {
+  return Object.entries(item)
+    .filter(([, value]) => value)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(" | ");
 }
 
 function GeneratedDetails({ run, activeFile, setActiveFile }) {
@@ -442,6 +557,7 @@ function StageIcon({ status }) {
   if (status === "complete") return <Check size={17} />;
   if (status === "running") return <Loader2 className="spin" size={17} />;
   if (status === "failed") return <AlertCircle size={17} />;
+  if (status === "skipped") return <Clock size={17} />;
   if (status === "waiting") return <Clock size={17} />;
   return <Clock size={17} />;
 }
@@ -455,6 +571,7 @@ function defaultStages(busy) {
     { id: "request", label: "Request received", status: busy ? "complete" : "pending", detail: "Enter repository and scenario details." },
     { id: "clone", label: "Clone repository", status: busy ? "running" : "pending", detail: "Temporary GitHub workspace." },
     { id: "analyze", label: "Analyze reuse", status: "pending", detail: "Find existing tests and reusable code." },
+    { id: "crawl", label: "Crawl web app", status: "pending", detail: "Collect UI evidence for new web tests." },
     { id: "generate", label: "Generate proposal", status: "pending", detail: "Create only required files." },
     { id: "review", label: "Human review", status: "pending", detail: "Review generated scripts." },
     { id: "approve", label: "Approval", status: "pending", detail: "Approve before commit and PR." },

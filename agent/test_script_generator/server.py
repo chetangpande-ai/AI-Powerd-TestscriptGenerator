@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,6 +62,7 @@ STAGE_LABELS = {
     "request": "Request received",
     "clone": "Clone repository",
     "analyze": "Analyze reuse",
+    "crawl": "Crawl web app",
     "generate": "Generate proposal",
     "review": "Human review",
     "approve": "Approval",
@@ -111,6 +113,11 @@ def create_run(request: GenerateRequest) -> dict[str, Any]:
         result = state["result"]
         reusability = _reusability_analysis(state, result)
         _mark(stages, "analyze", "complete", reusability["summary"])
+        web_discovery = state.get("web_discovery", {})
+        if web_discovery.get("enabled"):
+            _mark(stages, "crawl", "complete", web_discovery.get("summary", "Web discovery completed."))
+        else:
+            _mark(stages, "crawl", "skipped", web_discovery.get("summary", "Web discovery skipped."))
 
         if result.get("decision") == "generate":
             _mark(stages, "generate", "complete", f"{len(result.get('files', []))} file proposal(s) generated.")
@@ -132,6 +139,7 @@ def create_run(request: GenerateRequest) -> dict[str, Any]:
             "guidelines": request.guidelines,
             "result": result,
             "reusability_analysis": reusability,
+            "web_discovery": web_discovery,
             "stages": stages,
             "status": _status_from_result(result),
         }
@@ -151,6 +159,7 @@ def create_run(request: GenerateRequest) -> dict[str, Any]:
             "guidelines": request.guidelines,
             "result": {"decision": "failed", "summary": str(exception), "files": []},
             "reusability_analysis": {"summary": "Workflow failed before analysis.", "existing_match": None, "reused_files": []},
+            "web_discovery": {"enabled": False, "summary": "Workflow failed before web discovery.", "pages": [], "raw_script": []},
             "stages": stages,
             "status": "failed",
         }
@@ -172,8 +181,10 @@ def approve_run(run_id: str, request: ApproveRequest) -> dict[str, Any]:
     if result.get("decision") != "generate":
         raise HTTPException(status_code=400, detail="Only generated proposals can be approved.")
 
-    repo_dir = Path(run_state["repo_path"])
+    repo_dir = WORKSPACES_DIR / run_id / f"approval-{uuid.uuid4().hex[:8]}" / "repo"
+    run_state["repo_path"] = str(repo_dir)
     stages = run_state["stages"]
+    _reset_stages(stages, {"clone", "approve", "validate", "commit", "push", "pr"})
     try:
         _mark(stages, "clone", "running", "Preparing a fresh repository workspace for approval.")
         _ensure_dirs(repo_dir.parent)
@@ -198,7 +209,7 @@ def approve_run(run_id: str, request: ApproveRequest) -> dict[str, Any]:
         _mark(stages, "commit", "complete", f"Committed to {run_state['working_branch']}.")
 
         _mark(stages, "push", "running", "Pushing working branch to origin.")
-        _git(repo_dir, ["push", "-u", "origin", run_state["working_branch"]], token=token)
+        _git(repo_dir, ["push", "--force-with-lease", "-u", "origin", run_state["working_branch"]], token=token)
         _mark(stages, "push", "complete", "Branch pushed.")
 
         _mark(stages, "pr", "running", "Creating GitHub pull request.")
@@ -212,13 +223,13 @@ def approve_run(run_id: str, request: ApproveRequest) -> dict[str, Any]:
         return _public_run(run_state)
     except subprocess.CalledProcessError as exception:
         detail = _command_failure_message(exception)
-        _mark(stages, "validate", "failed", detail)
+        _mark(stages, _running_stage_id(stages) or "validate", "failed", detail)
         run_state["status"] = "failed"
         _save_run(RUNS_DIR / run_id, run_state)
         _cleanup_workspace(repo_dir)
         raise HTTPException(status_code=500, detail=_public_run(run_state))
     except Exception as exception:
-        _mark(stages, "pr", "failed", str(exception))
+        _mark(stages, _running_stage_id(stages) or "pr", "failed", str(exception))
         run_state["status"] = "failed"
         _save_run(RUNS_DIR / run_id, run_state)
         _cleanup_workspace(repo_dir)
@@ -240,9 +251,21 @@ def _mark(stages: list[dict[str, str]], stage_id: str, status: str, detail: str 
             return
 
 
+def _running_stage_id(stages: list[dict[str, str]]) -> str | None:
+    running = [stage["id"] for stage in stages if stage["status"] == "running"]
+    return running[-1] if running else None
+
+
+def _reset_stages(stages: list[dict[str, str]], stage_ids: set[str]) -> None:
+    for stage in stages:
+        if stage["id"] in stage_ids:
+            stage["status"] = "pending"
+            stage["detail"] = ""
+
+
 def _clone_repository(repository_url: str, branch: str, repo_dir: Path, token: str) -> None:
     if repo_dir.exists():
-        shutil.rmtree(repo_dir)
+        _remove_tree(repo_dir)
     _git(
         None,
         ["clone", "--branch", branch, "--single-branch", repository_url, str(repo_dir)],
@@ -360,6 +383,8 @@ def _combined_guidelines(guidelines: str) -> str:
 - Reuse existing automation framework code before creating new classes.
 - If a scenario already exists, return reuse_existing and do not generate duplicate tests.
 - For new UI pages, create page objects under src/main/java/.../pages and tests under src/test/java/.../tests/web.
+- For web UI tests, use crawl evidence to create a raw action plan first, then implement it as framework-style Page Object Model code.
+- For brand-new web frameworks, add only the minimal Selenium/TestNG/WebDriverManager/config/base classes needed.
 - Keep generated changes minimal and compatible with TestNG groups.
 """
     return f"{defaults}\n{guidelines}".strip()
@@ -421,12 +446,21 @@ def _cleanup_workspace(repo_dir: Path) -> None:
     workspace_root = WORKSPACES_DIR.resolve()
     target = repo_dir.parent.resolve()
     if target.exists() and target.is_relative_to(workspace_root):
+        _remove_tree(target, ignore_errors=True)
+
+
+def _remove_tree(target: Path, ignore_errors: bool = False) -> None:
+    for attempt in range(3):
         try:
             shutil.rmtree(target)
+            return
         except OSError:
-            # Windows can briefly hold Git pack files after clone operations.
-            # Cleanup is best-effort and must not fail the user workflow.
-            pass
+            if attempt < 2:
+                time.sleep(0.25 * (attempt + 1))
+                continue
+            if ignore_errors:
+                return
+            raise
 
 
 def _github_token() -> str:

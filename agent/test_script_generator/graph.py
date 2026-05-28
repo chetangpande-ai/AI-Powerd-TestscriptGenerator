@@ -16,6 +16,8 @@ from test_script_generator.scanner import (
     render_context_pack,
     select_context,
 )
+from test_script_generator.web_discovery import discover_web_context, render_web_context
+from test_script_generator.web_framework import enhance_web_result
 
 
 class GeneratorState(TypedDict, total=False):
@@ -26,6 +28,7 @@ class GeneratorState(TypedDict, total=False):
     catalog_summary: dict[str, Any]
     existing_match: str | None
     context_pack: str
+    web_discovery: dict[str, Any]
     result: dict[str, Any]
 
 
@@ -34,6 +37,23 @@ def build_graph(config: AgentConfig):
         catalog = build_catalog(config.repo_root)
         files = select_context(catalog, state["scenario"])
         match = find_existing_test_match(catalog, state["scenario"])
+        if match and not state.get("force_generate", False):
+            web_discovery = {
+                "enabled": False,
+                "summary": "Web crawl skipped because matching automation already exists.",
+                "urls": [],
+                "pages": [],
+                "raw_script": [],
+            }
+        else:
+            web_discovery = discover_web_context(
+                config.repo_root,
+                state["scenario"],
+                state.get("guidelines", ""),
+            )
+        context_pack = render_context_pack(catalog, state["scenario"], files)
+        if web_discovery.get("enabled"):
+            context_pack = f"{context_pack}\n\n{render_web_context(web_discovery)}"
         return {
             **state,
             "catalog_summary": {
@@ -42,7 +62,8 @@ def build_graph(config: AgentConfig):
                 "pages": [item.path.as_posix() for item in catalog.pages],
             },
             "existing_match": match.path.as_posix() if match else None,
-            "context_pack": render_context_pack(catalog, state["scenario"], files),
+            "web_discovery": web_discovery,
+            "context_pack": context_pack,
         }
 
     def decide_or_generate(state: GeneratorState) -> GeneratorState:
@@ -75,7 +96,8 @@ def build_graph(config: AgentConfig):
                 HumanMessage(content=user_prompt(state["context_pack"], state.get("guidelines", ""))),
             ]
         )
-        return {**state, "result": _parse_json_response(response.content)}
+        result = enhance_web_result(config.repo_root, _parse_json_response(response.content))
+        return {**state, "result": result}
 
     graph = StateGraph(GeneratorState)
     graph.add_node("inventory_repo", inventory_repo)

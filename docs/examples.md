@@ -141,3 +141,30 @@ The scenario does not say:
 - expected assertions
 
 The agent should avoid guessing when the scenario is too vague.
+
+## Example 5: Brand-New Web UI Scenario
+
+Scenario:
+
+```text
+Web UI: automate Google search smoke test for https://www.google.com. Open the home page, search for Selenium WebDriver, submit the search, and verify the results page is shown. Reuse existing web framework code if present. If no matching test exists, crawl the page, create a raw UI action plan, then generate Selenium TestNG Page Object Model code.
+```
+
+Expected result:
+
+```json
+{
+  "decision": "generate",
+  "status": "waiting_for_review"
+}
+```
+
+Expected behavior:
+
+- the `Crawl web app` stage is completed
+- raw action steps are shown in the UI
+- page evidence shows detected inputs, buttons, links, or crawl errors
+- generated code uses existing `BasePage`, `BaseWebTest`, driver utilities, config, and reporting when available
+- if the repository has no web framework yet, only minimal Selenium/TestNG framework additions are proposed
+
+After reviewer approval, the backend validates the Maven commands returned by the LLM, commits the approved files, pushes a generated branch, and raises a pull request.

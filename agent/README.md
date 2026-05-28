@@ -10,16 +10,17 @@ The agent builds a compact context pack from the repository every run:
 1. Scan Java classes, test classes, page objects, API helpers, config, and test data.
 2. Match the incoming scenario against existing test names, JavaDocs, methods, packages, and resource paths.
 3. If the same or very similar scenario already exists, return a reuse recommendation instead of generating a duplicate.
-4. If generation is needed, send only the selected context pack and guidelines to the LLM.
-5. Ask the LLM to return strict JSON with proposed full file contents and validation commands.
-6. Write files only when `--write` is provided.
+4. For new web UI scenarios, crawl the target URL and build a raw action plan from page evidence.
+5. If generation is needed, send only the selected context pack, crawl evidence, and guidelines to the LLM.
+6. Ask the LLM to return strict JSON with proposed full file contents and validation commands.
+7. Write files only when `--write` is provided.
 
 This is not vector RAG. The codebase context is selected by deterministic repository structure and lexical matching, which keeps behavior easier to audit.
 
 ## Setup
 
 ```powershell
-cd C:\Users\Ishan Pande\Documents\HdfcBank_Test_Automation
+cd C:\Users\Ishan Pande\Documents\AI-Powerd-TestscriptGenerator
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r agent\requirements.txt
